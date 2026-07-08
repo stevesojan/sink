@@ -1,0 +1,156 @@
+Verified Flow
+Your flow is mostly correct, with two corrections:
+The “internal node map” is a Python dict, so yes, functionally it is a hash map keyed by nodeId.
+Node execution is not async in these four files. The FastAPI request is async and the full pipeline is offloaded to a ProcessPoolExecutor, but linkedlist_traverse.py executes nodes sequentially in a while loop.
+Actual intended flow:
+POST /ss/json -> parse request body -> pipeline JSON/dict -> CreateNodeStructure.json_setting_to_map() -> json_dict node map -> LinkedList.linked_list_creation() -> execution linked list -> linked_list_traversal() -> stop before sink -> execute sink in api_main.py -> upload logs/status -> response.
+Important caveat: this local api_main.py does not currently compile because of malformed imports like LOGS JSON at [api_main.py (line 13)](C:/Users/OMEN/Documents/Newgen_DSS_files/api_main.py:13). The other three files pass parse-only compile.
+api_main.py
+Summary:
+Defines the FastAPI app and /ss/json endpoint in create().
+Reads raw request bytes through parse_body() and converts them into a Python dict.
+Uses ProcessPoolExecutor so each pipeline runs in a subprocess.
+run_pipeline() handles logging, Postgres setup, kill-api metadata, node map creation, linked-list creation, traversal, sink execution, uploads, cleanup, and final response.
+Calls CreateNodeStructure, LinkedList, linked_list_traversal, and MainControllerRunner.executioner() as the main orchestration chain.
+Pros:
+Good central orchestration point; subprocess isolation helps with memory cleanup; logging/status upload is integrated.
+Cons:
+Does not compile in this snapshot; JSON parsing uses string replacement plus ast.literal_eval; node execution is serial; global parser/controller objects may leak state across reused worker tasks; typo SUCESS_VALUE should likely be SUCCESS_VALUE.
+Improvements:
+Fix malformed imports/constants, use json.loads, instantiate request-scoped parser/controller state, avoid private _pipeline_pool._broken, and move cleanup into safer finally blocks.
+JsonParser.py
+Summary:
+Main class is CreateNodeStructure.
+json_setting_to_map() builds final_output, a node-id keyed Python dict/hash map.
+Specialized helpers normalize source, sink, feature, model, validation, AutoDex, GenAI, DEX, and Jupyter settings.
+It injects shared metadata like pipeline id, timestamp, version, user id, active directory, label column, categorical columns, and sink settings.
+create_graph_node() and create_key() build a human-readable pipeline_graph; is_sink_available() detects sink nodes.
+Pros:
+Centralizes JSON normalization; gives O(1) node lookup by id; handles many node categories.
+Cons:
+Many except Exception: pass blocks hide bad/missing JSON; mutates input JSON in place; several constants used in create_key() appear undefined/import-missing; parser stores mutable state like common_sink_settings.
+Improvements:
+Use explicit schema validation, specific exceptions with logging, a stateless parser return object, shared helper for common metadata injection, and properly imported constants.
+link_list.py
+Summary:
+Defines Node, which stores id, json, next_id, and previous_id.
+LinkedList.create_list() converts comma-separated node ids into shared Node objects using a dict cache.
+linked_list_creation() reads linkNodeOfNAIComponents, links previous/next nodes, chooses a head, builds pipeline_graph, moves sink to the end, and optionally appends a Drools rule node.
+update_head_node() tries to adjust the head toward the earliest source node.
+rearrange() linearizes the graph into the execution chain consumed by traversal.
+Pros:
+Maintains object identity per node id; supports prev/next graph metadata; separates sink execution to the end.
+Cons:
+CreateNodeStructure.create_graph_node() is called as an unbound class method, which should fail at runtime; DAG branches are flattened into one linked list, so parallel/branch semantics may be lost; next_id changes shape from list to single node after rearrange.
+Improvements:
+Instantiate or inject CreateNodeStructure, return self.headval after head updates, use sets for visited nodes, validate missing/cyclic nodes, and consider a topological DAG executor instead of destructive linked-list flattening.
+linkedlist_traverse.py
+Summary:
+linked_list_traversal() walks the linked list node by node.
+It stops when it reaches the sink, returns execution context, and lets api_main.py execute the sink.
+For each non-sink node it calls upper_layer_object.executioner() and then object_creator().
+It updates status_dict, list_of_nodes_executed, global_dataframe, model_sequence, and serving sequence state.
+Helpers manage serving sequence, dataframe cleanup, AutoML categorical column updates, and GenAI-specific dictionary updates.
+Pros:
+Simple sequential executor; keeps shared execution state in one place; attempts memory cleanup by deleting previous dataframes.
+Cons:
+Critical typo: serving_seqounce is used but never initialized from serving_sequence; *args makes the function contract fragile; response keys are assumed without validation; failures inside node execution are not locally wrapped with node context.
+Improvements:
+Replace *args with a typed signature or context object, fix serving_sequence spelling everywhere, validate executor responses, log node-level failures, and only delete prior dataframes when downstream branch dependencies are definitely complete.
+
+
+
+so when we say the fastapi request is asynchronous that means every pipeline within the fastapi request is async or that every request sent is async? explain using services from within api_main.py that we have 
+
+
+
+
+6:49 AM
+
+
+
+
+
+
+In this api_main.py, “FastAPI request is asynchronous” means the HTTP request handler can yield control while waiting, not that every node inside the pipeline runs asynchronously.
+Specifically:
+[api_main.py (line 213)](C:/Users/OMEN/Documents/Newgen_DSS_files/api_main.py:213) defines:
+@app.post("/ss/json")
+async def create(...)
+So each /ss/json request is handled by an async FastAPI endpoint. Inside it, two async-ish things happen:
+data: bytes = await request.body()
+and later:
+result = await loop.run_in_executor(pool, run_pipeline, data, log_file)
+That second line is the key. FastAPI receives the request, parses it, then submits run_pipeline() to a separate process through ProcessPoolExecutor. While that pipeline is running, the FastAPI event loop is free to handle other incoming requests instead of being blocked.
+But the pipeline itself is not async.
+Inside run_pipeline() the flow is synchronous:
+json_dict = json_parser_object.json_setting_to_map(data)
+ll = LinkedList().linked_list_creation(...)
+recursion_results = linkedlist_traverse.linked_list_traversal(...)
+Then inside linked_list_traversal(), nodes execute one after another in a normal while loop:
+while head_node != None:
+    setting_url = upper_layer_object.executioner(linked_list_json)
+    response = setting_url.object_creator(dictionary_pass)
+    head_node = head_node.next_id
+So the node flow is:
+node 1 executes -> response comes back -> dataframe/status updated -> node 2 executes -> ...
+No await, no asyncio.gather, no parallel execution of pipeline nodes.
+Also, this pool is configured as:
+ProcessPoolExecutor(max_workers=1, ...)
+That means only one pipeline process runs at a time in this app instance. If two /ss/json requests arrive:
+Request A enters create().
+Request A submits run_pipeline() to the process pool.
+Request B can still be accepted by FastAPI.
+But Request B’s pipeline waits because max_workers=1.
+When Request A finishes, Request B’s run_pipeline() starts.
+So the clean answer is:
+Every request is handled asynchronously at the FastAPI layer, but each pipeline runs synchronously inside run_pipeline(), and node execution is sequential. With max_workers=1, multiple pipeline requests can be accepted concurrently, but actual pipeline execution is queued one at a time.
+
+6:49 AM
+
+
+
+
+
+
+in api_main.py, what is the advantage of having each pipeline executed as a separate sub process through process pool executor?
+
+
+
+
+7:14 AM
+
+
+
+
+
+
+In api_main.py, the advantage is mainly isolation and memory control.
+The endpoint does this:
+result = await loop.run_in_executor(pool, run_pipeline, data, log_file)
+So the FastAPI request hands the heavy pipeline work to run_pipeline() inside a separate worker process created by ProcessPoolExecutor.
+The benefits are:
+FastAPI server stays responsive
+The pipeline can do CPU-heavy ML/dataframe work without blocking the main FastAPI event loop. Other HTTP requests can still be accepted while one pipeline is running.
+
+Memory is better isolated
+ML pipelines often create large dataframes, models, temp objects, feature maps, etc. Running them in a subprocess means much of that memory belongs to the worker process, not the web server process.
+
+Memory can be reclaimed more reliably
+The comment in api_main.py says this directly: subprocess exit helps free memory. Python sometimes does not immediately return large memory allocations to the OS inside a long-running process, especially with pandas/numpy/sklearn workloads.
+
+Pipeline crashes are contained
+If a pipeline crashes hard or is killed through the kill API, it is less likely to bring down the FastAPI server itself. The code catches BrokenProcessPool and recreates the pool.
+
+Kill API can target the pipeline process
+run_pipeline() captures:
+
+process_id = os.getpid()
+and stores it through:
+dump_kill_api_data_postgresql(...)
+That makes it possible for another service/API to identify and terminate the actual pipeline process.
+Avoids GIL limitations for CPU-heavy work
+Since it uses processes, not threads, CPU-heavy Python/ML work can run outside the main interpreter’s GIL. In this file max_workers=1, so it is not using parallel pipeline execution, but it still gets process isolation.
+One nuance: because the pool is configured with:
+max_workers=1
+this does not mean multiple pipelines execute at the same time in this app instance. It means multiple requests can be accepted, but pipeline execution is queued one at a time. The design seems optimized more for controlled resource usage, crash isolation, killability, and memory cleanup than for high parallel throughput.
