@@ -206,3 +206,30 @@ this does not mean multiple pipelines execute at the same time in this app insta
           │
           ▼
      Ready Queue
+
+
+
+
+Execution workflow
+
+                  1 (Customer CSV)          2 (Transaction CSV)
+                       │                          │
+                       │                          │
+                       ▼                          ▼
+                 3 (Clean Customer)       4 (Clean Transactions)
+                       │                          │
+                       │                          │
+                       └──────────┐    ┌──────────┘
+                                  ▼    ▼
+                           5 (Join Customer + Transactions)
+                             /                      \
+                            /                        \
+                           ▼                          ▼
+              6 (Feature Engineering)      7 (Fraud Features)
+                      \                         /
+                       \                       /
+                        ▼                     ▼
+                      8 (Random Forest Model)
+                               │
+                               ▼
+                           9 (Sink)
