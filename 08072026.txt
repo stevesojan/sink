@@ -154,3 +154,55 @@ Since it uses processes, not threads, CPU-heavy Python/ML work can run outside t
 One nuance: because the pool is configured with:
 max_workers=1
 this does not mean multiple pipelines execute at the same time in this app instance. It means multiple requests can be accepted, but pipeline execution is queued one at a time. The design seems optimized more for controlled resource usage, crash isolation, killability, and memory cleanup than for high parallel throughput.
+
+
+
+10 july, dag based workflow:
+
+                    Frontend JSON
+                           │
+                           ▼
+                      JSON Parser
+                           │
+                           ▼
+                     Build DAG Graph
+                           │
+                           ▼
+                 Compute Initial Indegrees
+                           │
+                           ▼
+                     Initialize State
+                    (PipelineState)
+                           │
+                           ▼
+                  Initialize Ready Queue
+                (nodes with indegree = 0)
+                           │
+                           ▼
+                 ┌────────────────────┐
+                 │ Pipeline Scheduler │
+                 └────────────────────┘
+                           │
+          ┌────────────────┴────────────────┐
+          │                                 │
+          ▼                                 ▼
+    Guardrail Pass                  Guardrail Fail
+          │                                 │
+          ▼                                 │
+   Dispatch to Worker               Remain Ready
+ (existing process pool)             but blocked
+          │                                 │
+          ▼                                 │
+     Execute Node                           │
+          │                                 │
+          ▼                                 │
+   Update PipelineState                     │
+          │                                 │
+          ▼                                 │
+ Decrement Child Indegrees                  │
+          │                                 │
+          ▼                                 │
+ Newly Ready Nodes ─────────────────────────┘
+          │
+          ▼
+     Ready Queue
