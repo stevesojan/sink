@@ -233,3 +233,237 @@ Execution workflow
                                │
                                ▼
                            9 (Sink)
+
+
+Explanation of execution of above workflow
+
+Initial State
+The scheduler first computes indegrees.
+Node
+Indegree
+1
+0
+2
+0
+3
+1
+4
+1
+5
+2
+6
+1
+7
+1
+8
+2
+9
+1
+Ready Queue initially:
+[1, 2]
+Both are head nodes.
+Scheduler - Iteration 1
+Ready Queue
+1
+2
+They are
+independent
+different input datasets
+no shared resources
+Guardrails pass.
+Scheduler dispatches both simultaneously.
+Worker A → Node 1
+
+Worker B → Node 2
+Meanwhile
+PipelineState
+
+customer_df = None
+
+transaction_df = None
+Node 1 finishes first
+Node 1 updates the PipelineState object.
+state.customer_df = customer_dataframe
+Scheduler decrements indegree.
+Node 3
+
+1 → 0
+Ready Queue becomes
+3
+Can Node 3 execute?
+Yes.
+Worker A immediately starts Node 3.
+Notice that the scheduler does not wait for Node 2 to finish.
+This is an important optimization.
+Node 2 finishes
+PipelineState
+state.transaction_df = transaction_dataframe
+Indegree
+Node 4
+
+1 → 0
+Ready Queue
+4
+Worker B starts Node 4.
+Node 3 and Node 4
+Suppose
+Node 3
+Clean Customer
+writes
+Customer_Name
+Age
+Gender
+Node 4
+Clean Transactions
+writes
+Amount
+Merchant
+Date
+No overlap.
+They execute together.
+Completion
+After both finish
+PipelineState contains
+customer_df
+
+transaction_df
+
+clean_customer_df
+
+clean_transaction_df
+Node 5
+Node 5 depends on BOTH.
+Indegree
+Initially
+2
+After Node 3
+1
+Still blocked.
+After Node 4
+0
+Scheduler pushes
+5
+to Ready Queue.
+Node 5
+Joins
+clean_customer_df
+
++
+
+clean_transaction_df
+Creates
+joined_df
+Updates
+state.joined_df
+Node 6 and Node 7
+Now
+joined_df
+feeds
+6
+
+Feature Engineering
+and
+7
+
+Fraud Feature Engineering
+Ready Queue
+6
+
+7
+Case A
+Different columns.
+Node 6 writes
+Age_Bucket
+
+Income_Band
+Node 7 writes
+Fraud_Score
+
+Merchant_Risk
+No conflicts.
+Scheduler dispatches both.
+Case B
+Conflict
+Suppose
+Node 6
+writes
+Amount
+Node 7
+also writes
+Amount
+Guardrail detects
+Write Amount
+
+Write Amount
+Conflict.
+Scheduler chooses
+Node 6
+Node 7 remains
+Ready
+
+but blocked
+It stays in the Ready Queue.
+Node 6 finishes
+PipelineState updated.
+Scheduler checks.
+Node 7
+still has
+indegree = 0
+and now
+no conflict
+Worker executes Node 7.
+Node 8
+Random Forest
+Depends on
+6
+
+7
+Initially
+indegree = 2
+After
+Node 6
+1
+Still blocked.
+After
+Node 7
+0
+Scheduler pushes
+8
+Ready Queue
+8
+Execute.
+Node 9
+Sink
+Runs after
+Node 8
+Completes.
+PipelineState evolution
+Initially
+state
+
+├── customer_df = None
+├── transaction_df = None
+├── joined_df = None
+├── model = None
+After Node 1
+customer_df
+After Node 2
+transaction_df
+After Node 5
+joined_df
+After Node 8
+model = RandomForest(...)
+After Node 9
+predictions
+
+metrics
+
+artifacts
+Why this architecture is robust:
+
+This example demonstrates all the important cases:
+Multiple head nodes: Nodes 1 and 2 are both initial sources with indegree 0, so they are immediately eligible for execution.
+Independent parallelism: Nodes 1 & 2, and later 3 & 4, can run concurrently because they don't depend on each other.
+Dependency synchronization: Node 5 waits until both upstream branches complete before becoming ready.
+Guardrail-based scheduling: Nodes 6 & 7 may both be ready, but the scheduler can serialize them if they would conflict (e.g., both writing the same column), while still allowing parallel execution when they operate on disjoint data.
+PipelineState updates: Every completed node mutates the same PipelineState object for that pipeline, and those updates are what downstream nodes consume.
