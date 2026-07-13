@@ -775,3 +775,426 @@ Example JSON
   "dataManagedIdentity": "false"
 }
 
+
+code for graph_builder.py
+
+# graph_builder.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+import networkx as nx
+
+
+@dataclass(frozen=True)
+class NodeMetadata:
+    """
+    Immutable metadata for a single pipeline node.
+
+    This is intentionally separated from graph topology so the scheduler
+    can reason about node behavior without needing to inspect execution code.
+    """
+    node_id: str
+    settings: str
+    algo_name: Optional[str] = None
+    algo_type: Optional[str] = None
+    type: Optional[str] = None
+    raw: Dict[str, Any] = field(default_factory=dict)
+
+    # Scheduling / guardrail metadata
+    reads: Set[str] = field(default_factory=set)
+    writes: Set[str] = field(default_factory=set)
+    resource_tags: Set[str] = field(default_factory=set)
+    parallelizable: bool = True
+    estimated_cost: Optional[float] = None
+
+
+@dataclass
+class PipelineGraph:
+    """
+    Immutable-ish wrapper around a NetworkX DiGraph plus node metadata.
+
+    The graph object itself is mutable because NetworkX graphs are mutable,
+    but this wrapper should be treated as compile-time graph topology.
+    Runtime state must live elsewhere (PipelineState).
+    """
+    graph: nx.DiGraph
+    metadata: Dict[str, NodeMetadata]
+    roots: List[str]
+    sinks: List[str]
+    indegrees: Dict[str, int]
+
+    def children(self, node_id: str) -> List[str]:
+        return list(self.graph.successors(node_id))
+
+    def parents(self, node_id: str) -> List[str]:
+        return list(self.graph.predecessors(node_id))
+
+    def node(self, node_id: str) -> NodeMetadata:
+        return self.metadata[node_id]
+
+    def all_nodes(self) -> List[str]:
+        return list(self.graph.nodes())
+
+    def is_root(self, node_id: str) -> bool:
+        return self.indegrees.get(node_id, 0) == 0
+
+    def is_sink(self, node_id: str) -> bool:
+        return self.graph.out_degree(node_id) == 0
+
+
+class GraphBuilderError(Exception):
+    pass
+
+
+class GraphBuilder:
+    """
+    Builds a DAG from the parsed JSON dict returned by JsonParser.json_setting_to_map().
+
+    This class replaces the graph-construction responsibilities of link_list.py.
+    It does NOT linearize the graph. It preserves DAG structure for later
+    Kahn scheduling + ready queue execution.
+
+    Expected input:
+        parsed_json: Dict[str, Any]
+            The top-level workflow JSON as produced by frontend + JsonParser.
+
+        json_dict: Dict[str, Dict[str, Any]]
+            The node-id keyed dict returned by JsonParser.json_setting_to_map().
+            Example:
+                {
+                    "1": {"nodeId": "1", ...},
+                    "2": {"nodeId": "2", ...},
+                    ...
+                }
+
+        link_nodes: List[Dict[str, Any]]
+            Optional direct access to parsed workflow adjacency records.
+            If omitted, GraphBuilder will try to use parsed_json["linkNodeOfNAIComponents"].
+
+    The graph is built using the following rules:
+        - Each node becomes a NetworkX node.
+        - Each edge is added from prevNodeId -> currentId (or currentId -> nextNodeId).
+        - A node can be part of any settings group (sourceSettings, etlSettings, etc.).
+        - Roots are nodes with indegree == 0.
+        - Sinks are nodes with out_degree == 0.
+    """
+
+    def __init__(self) -> None:
+        self._graph = nx.DiGraph()
+        self._metadata: Dict[str, NodeMetadata] = {}
+        self._roots: List[str] = []
+        self._sinks: List[str] = []
+        self._indegrees: Dict[str, int] = {}
+
+    def build(
+        self,
+        parsed_json: Dict[str, Any],
+        json_dict: Dict[str, Dict[str, Any]],
+    ) -> PipelineGraph:
+        """
+        Build the DAG and return a PipelineGraph object.
+        """
+        link_nodes = parsed_json.get("linkNodeOfNAIComponents", [])
+        if not isinstance(link_nodes, list):
+            raise GraphBuilderError("linkNodeOfNAIComponents must be a list")
+
+        self._reset()
+
+        # 1) Add nodes with metadata
+        self._add_nodes_from_json_dict(json_dict)
+
+        # 2) Add edges from the linkNodeOfNAIComponents adjacency info
+        self._add_edges_from_link_nodes(link_nodes, json_dict)
+
+        # 3) Validate structure
+        self._validate_graph()
+
+        # 4) Compute derived scheduling data
+        self._compute_roots_and_sinks()
+        self._compute_indegrees()
+
+        return PipelineGraph(
+            graph=self._graph,
+            metadata=self._metadata,
+            roots=self._roots,
+            sinks=self._sinks,
+            indegrees=self._indegrees,
+        )
+
+    def _reset(self) -> None:
+        self._graph = nx.DiGraph()
+        self._metadata = {}
+        self._roots = []
+        self._sinks = []
+        self._indegrees = {}
+
+    def _add_nodes_from_json_dict(self, json_dict: Dict[str, Dict[str, Any]]) -> None:
+        """
+        Add all nodes present in json_dict to the graph.
+
+        json_dict is expected to be keyed by node id.
+        """
+        for node_id, node_payload in json_dict.items():
+            meta = self._build_metadata(node_id, node_payload)
+            self._metadata[node_id] = meta
+            self._graph.add_node(node_id)
+
+    def _add_edges_from_link_nodes(
+        self,
+        link_nodes: List[Dict[str, Any]],
+        json_dict: Dict[str, Dict[str, Any]],
+    ) -> None:
+        """
+        Add directed edges between nodes.
+
+        The JSON uses:
+            currentId
+            prevNodeId
+            nextNodeId
+
+        To build a DAG, we primarily use currentId -> nextNodeId edges.
+        If nextNodeId is absent but prevNodeId exists, we can still infer edges
+        by using prevNodeId -> currentId.
+        """
+        for node in link_nodes:
+            current_id = str(node.get("currentId", "")).strip()
+            next_id = str(node.get("nextNodeId", "")).strip()
+            prev_id = str(node.get("prevNodeId", "")).strip()
+
+            if not current_id:
+                continue
+
+            # Ensure current node exists, even if metadata dict was incomplete.
+            if current_id not in self._graph:
+                self._graph.add_node(current_id)
+                if current_id not in self._metadata:
+                    self._metadata[current_id] = self._build_metadata(current_id, node)
+
+            # Prefer current -> next, because it matches execution direction.
+            if next_id and next_id in json_dict:
+                if next_id not in self._graph:
+                    self._graph.add_node(next_id)
+                    if next_id not in self._metadata:
+                        self._metadata[next_id] = self._build_metadata(next_id, json_dict[next_id])
+                self._graph.add_edge(current_id, next_id)
+
+            # Fallback / additional validation path: prev -> current
+            # This is useful when nextNodeId is missing or inconsistent.
+            if prev_id and prev_id in json_dict:
+                if prev_id not in self._graph:
+                    self._graph.add_node(prev_id)
+                    if prev_id not in self._metadata:
+                        self._metadata[prev_id] = self._build_metadata(prev_id, json_dict[prev_id])
+                if current_id != prev_id:
+                    self._graph.add_edge(prev_id, current_id)
+
+        # Remove accidental duplicate edges logically handled by DiGraph.
+
+    def _build_metadata(self, node_id: str, payload: Dict[str, Any]) -> NodeMetadata:
+        """
+        Build NodeMetadata from the parsed JSON node payload.
+
+        This function is the right place to attach future scheduling metadata,
+        such as reads/writes/resource tags, because the scheduler should not
+        have to infer semantics from raw JSON repeatedly.
+        """
+        settings = str(payload.get("settings", "")).strip()
+        algo_name = payload.get("algoName")
+        algo_type = payload.get("algoType")
+        node_type = payload.get("type")
+
+        reads, writes = self._infer_read_write_sets(payload)
+        resource_tags = self._infer_resource_tags(payload, settings, algo_name)
+        parallelizable = self._infer_parallelizable(payload, settings, algo_name)
+
+        return NodeMetadata(
+            node_id=str(node_id),
+            settings=settings,
+            algo_name=algo_name,
+            algo_type=algo_type,
+            type=node_type,
+            raw=payload,
+            reads=reads,
+            writes=writes,
+            resource_tags=resource_tags,
+            parallelizable=parallelizable,
+            estimated_cost=None,
+        )
+
+    def _infer_read_write_sets(self, payload: Dict[str, Any]) -> Tuple[Set[str], Set[str]]:
+        """
+        Best-effort extraction of read/write columns from the JSON metadata.
+
+        Your frontend JSON already carries column-related metadata in many nodes.
+        This method normalizes those fields into scheduler-friendly sets.
+
+        Since node payloads vary across settings types, this is deliberately
+        conservative and safe.
+        """
+        reads: Set[str] = set()
+        writes: Set[str] = set()
+
+        # Common field patterns seen in workflow metadata
+        candidate_fields = [
+            "column",
+            "columns",
+            "categoricalColumns",
+            "commonLableCol",
+            "labelColumn",
+            "targetColumn",
+            "outputColumn",
+            "inputColumn",
+        ]
+
+        for field_name in candidate_fields:
+            value = payload.get(field_name)
+            if value is None:
+                continue
+
+            if isinstance(value, str):
+                cols = [c.strip() for c in value.split(",") if c.strip()]
+                for col in cols:
+                    reads.add(col)
+
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, str) and item.strip():
+                        reads.add(item.strip())
+
+            elif isinstance(value, dict):
+                # Some operations may encode column metadata nested inside dicts.
+                for k, v in value.items():
+                    if isinstance(v, str) and v.strip():
+                        reads.add(v.strip())
+
+        algo_name = str(payload.get("algoName", "")).lower()
+        settings = str(payload.get("settings", "")).lower()
+
+        # Heuristic write inference for common operation classes.
+        # You can refine this later using richer metadata from JsonParser.
+        if any(token in algo_name for token in ["drop", "impute", "normalize", "scale", "encode", "bucket", "dateextract", "stringindexer"]):
+            # If only one column is involved, output may overwrite or create transformed feature.
+            # Use conservative write handling to prevent unsafe parallelism.
+            if reads:
+                writes.update(reads)
+
+        if "sink" in settings:
+            # Sinks generally write externally rather than to columns.
+            writes = set()
+
+        return reads, writes
+
+    def _infer_resource_tags(self, payload: Dict[str, Any], settings: str, algo_name: Optional[str]) -> Set[str]:
+        """
+        Resource tags are coarse-grained locks used by the scheduler.
+
+        Examples:
+            - dataframe:source1
+            - table:test_db_result
+            - gpu
+            - file:/path
+        """
+        tags: Set[str] = set()
+
+        source_name = payload.get("sourceName")
+        if isinstance(source_name, str) and source_name.strip():
+            tags.add(f"source:{source_name.strip()}")
+
+        sink_type = payload.get("sinkType")
+        if isinstance(sink_type, str) and sink_type.strip():
+            tags.add(f"sink:{sink_type.strip()}")
+
+        if payload.get("postgresSettings"):
+            tags.add("postgres")
+
+        if payload.get("sparkConfig"):
+            tags.add("spark")
+
+        if payload.get("isDistributed") is True:
+            tags.add("distributed")
+
+        if payload.get("localSpark") == "true":
+            tags.add("spark-local")
+
+        if "genai" in settings or (algo_name and "genai" in algo_name.lower()):
+            tags.add("genai")
+
+        return tags
+
+    def _infer_parallelizable(self, payload: Dict[str, Any], settings: str, algo_name: Optional[str]) -> bool:
+        """
+        Conservative parallelism flag.
+
+        Many nodes can be parallelizable, but some should remain serialized
+        by policy (for example, sinks or steps that mutate shared scope).
+        """
+        if "sink" in settings:
+            return False
+
+        if algo_name and str(algo_name).lower() in {"drop", "rename"}:
+            return False
+
+        return True
+
+    def _validate_graph(self) -> None:
+        """
+        Validate the DAG. Right now:
+            - ensure graph is directed
+            - ensure all referenced nodes exist
+            - detect cycles
+
+        Future:
+            - validate workflow-specific constraints
+            - validate no orphaned internal nodes
+            - validate supported node types
+        """
+        # All nodes in metadata should exist in graph
+        missing_nodes = [node_id for node_id in self._metadata if node_id not in self._graph]
+        if missing_nodes:
+            raise GraphBuilderError(f"Metadata references nodes missing from graph: {missing_nodes}")
+
+        # Cycle detection
+        try:
+            cycle = nx.find_cycle(self._graph, orientation="original")
+            if cycle:
+                raise GraphBuilderError(f"Cycle detected in workflow graph: {cycle}")
+        except nx.exception.NetworkXNoCycle:
+            pass
+
+    def _compute_roots_and_sinks(self) -> None:
+        """
+        Roots = nodes with indegree 0
+        Sinks = nodes with out_degree 0
+
+        This is exactly what Kahn-style scheduling wants as the starting point.
+        """
+        self._roots = [node for node in self._graph.nodes if self._graph.in_degree(node) == 0]
+        self._sinks = [node for node in self._graph.nodes if self._graph.out_degree(node) == 0]
+
+    def _compute_indegrees(self) -> None:
+        self._indegrees = {node: self._graph.in_degree(node) for node in self._graph.nodes()}
+
+
+class GraphCompiler:
+    """
+    Thin orchestration wrapper.
+
+    This exists so that later you can swap:
+        - networkx
+        - rustworkx
+        - custom graph backend
+    without changing the rest of the platform.
+    """
+
+    def __init__(self) -> None:
+        self._builder = GraphBuilder()
+
+    def compile(
+        self,
+        parsed_json: Dict[str, Any],
+        json_dict: Dict[str, Dict[str, Any]],
+    ) -> PipelineGraph:
+        return self._builder.build(parsed_json, json_dict)
