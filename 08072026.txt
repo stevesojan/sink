@@ -467,3 +467,311 @@ Independent parallelism: Nodes 1 & 2, and later 3 & 4, can run concurrently beca
 Dependency synchronization: Node 5 waits until both upstream branches complete before becoming ready.
 Guardrail-based scheduling: Nodes 6 & 7 may both be ready, but the scheduler can serialize them if they would conflict (e.g., both writing the same column), while still allowing parallel execution when they operate on disjoint data.
 PipelineState updates: Every completed node mutates the same PipelineState object for that pipeline, and those updates are what downstream nodes consume.
+
+
+
+
+Example JSON
+{
+  "projectId": "1764651754066464",
+  "variableDerivationSettings": [],
+  "sinkSettings": [
+    {
+      "nodeId": "3",
+      "algoText": "fileTransferSink",
+      "fileTransferProtocol": "ftp",
+      "sinkIp": "10.2.3.13",
+      "sinkPort": "21",
+      "sinkUser": "azureuser",
+      "sinkPassword": "4nIKO933yRtg7xjCmOGHB0ayQn6LTjFAucb6WH9ZU9PTCmt9765OLNZn2BJiRQ==",
+      "fileTransferEncryption": "plainText",
+      "outputStorageDir": "check",
+      "sinkType": "filetransfersink",
+      "pmmlSave": "false",
+      "algoName": "xgBoostClassification"
+    }
+  ],
+  "modelAlgoSettings": [
+    {
+      "nodeId": "9",
+      "algo": "XG Boost Classification",
+      "algoText": "xgb-c",
+      "commonLableCol": "source1_is_fraud",
+      "hyperParameterTunning": "false",
+      "seed": "12345",
+      "xgbMaxDepth": "5",
+      "xgbMaxBins": "50",
+      "xgbNumTree": "100",
+      "xgbSubSamplingRate": "0.1",
+      "isMultiClass": "false",
+      "liftGainChart": "false",
+      "metricName": "accuracy",
+      "conditionPositive": "1",
+      "conditionNegative": "0",
+      "xgbLearningRate": "0.3",
+      "xgbAlpha": "0",
+      "xgbLambda": "1",
+      "xgbGamma": "0",
+      "xgbMinChildWeight": "1",
+      "xgbTreeMethod": "auto",
+      "groupName": "modelAlgoSettings",
+      "algoType": "XGBoostClassification",
+      "dragId": 9,
+      "branchId": "b1",
+      "sinkType": "filetransfersink",
+      "algoName": "xgBoostClassification"
+    }
+  ],
+  "dataProfilingSettings": [
+    {
+      "nodeId": "10",
+      "algoName": "stringIndexer",
+      "operations": [
+        {
+          "columns": "source1_device_type,source1_location_city",
+          "handleInvalidType": "keep"
+        }
+      ]
+    },
+    {
+      "nodeId": "8",
+      "operations": [
+        {
+          "split": "250,500,750",
+          "columns": "source1_transaction_amount",
+          "maxBound": "10000",
+          "minBound": "0"
+        }
+      ],
+      "algoName": "bucketizer"
+    }
+  ],
+  "dataExplorationSettings": [],
+  "dataExplorationSettingsForTs": [],
+  "dexActionSettings": [],
+  "etlSettings": [
+    {
+      "nodeId": "2",
+      "type": "1DFOperartion",
+      "operations": [
+        {
+          "column": "source1_transaction_id"
+        }
+      ],
+      "algoName": "drop"
+    },
+    {
+      "nodeId": "4",
+      "type": "1DFOperartion",
+      "functionAppliedOn": "Specific Column",
+      "algoName": "etlMissingValue",
+      "operations": [
+        {
+          "columns": "source1_transaction_amount",
+          "functionName": "ImputeWithMean",
+          "isDeleteNullDistributionColumn": "false"
+        },
+        {
+          "columns": "source1_device_type",
+          "functionName": "ImputeWithMode",
+          "isDeleteNullDistributionColumn": "false"
+        }
+      ]
+    }
+  ]
+}
+        {
+          "columns": "source1_location_city",
+          "functionName": "ImputeWithMode",
+          "isDeleteNullDistributionColumn": "false"
+        }
+      ]
+    },
+    {
+      "nodeId": "5",
+      "type": "1DFOperartion",
+      "operations": [
+        {
+          "column": "source1_platform"
+        }
+      ],
+      "algoName": "drop"
+    },
+    {
+      "nodeId": "6",
+      "type": "1DFOperartion",
+      "operations": [
+        {
+          "column": "source1_transaction_time",
+          "dateFormat": "yyyy-MM-dd",
+          "dateFunctionName": "weekofyear"
+        }
+      ],
+      "algoName": "dateExtract"
+    },
+    {
+      "nodeId": "7",
+      "type": "1DFOperartion",
+      "operations": [
+        {
+          "column": "source1_transaction_time"
+        }
+      ],
+      "algoName": "drop"
+    }
+  ],
+  "droolsSettings": {},
+  "segmentationSettings": [],
+  "groupByAlgoSettings": [],
+  "crossTabulationSettings": [],
+  "evaluatorSettings": [],
+  "jupyterSettings": {},
+  "featureSettings": [],
+  "dataSplitSettings": [],
+  "genAiSettings": [],
+  "dataTransformationSettings": [],
+  "sourceSettings": [
+    {
+      "nodeId": "1",
+      "algo": "fileTransfer",
+      "algoText": "fileTransfer",
+      "fileTransferProtocol": "ftp",
+      "sourceIp": "10.2.3.13",
+      "sourcePort": "21",
+      "sourceUser": "azureuser",
+      "sourcePassword": "iPGJ2sbwrmK/3V7llIsuejajqkLsLdI6khHNsmUSfXfpm2zizBEicUilWxAmkQ==",
+      "fileTransferEncryption": "plainText",
+      "fileType": "csv",
+      "ftpInputFilePath": "/DATSET_TEST/custom_fraud_dataset.csv",
+      "categoricalColumns": "source1_transaction_time,source1_device_type,source1_location_city,source1_platform,source1_is_international,source1_is_fraud",
+      "nonFeaturesColsList": "",
+      "sourceName": "source1",
+      "dataSource": "fileTransfer",
+      "dataHeaderPresent": "true",
+      "rowLimit": 20,
+      "dataHeaderPresent": "true",
+      "rowLimit": 20,
+      "ftpType": "fileTransfer",
+      "editSourceCalled": false,
+      "sourceCategory": "primary",
+      "algoName": "na",
+      "algoType": "NA"
+    }
+  ],
+  "processId": 1783403403675,
+  "timestamp": "1783403404412",
+  "scheduling": "false",
+  "pipelineId": "jim_ntngai_com_1779087929472630",
+  "activeDirectory": "jim@ntngai.com",
+  "userId": "jim_ntngai_com",
+  "hiddenStoragePathForLocal": "/home/azureuser",
+  "trainValidation": "false",
+  "deleteExistingPipeline": "false",
+  "modelSaveOnWholeDataSetFlag": "false",
+  "sanityTest": "false",
+  "trainDataCountFlag": "false",
+  "metadataFlag": "false",
+  "orderOfNAIComponents": "sourceSettings,etlSettings,dataProfilingSettings,modelAlgoSettings,sinkSettings",
+  "version": "V1",
+  "emailId": "jim@ntngai.com",
+  "collectionName": "azure_tenant",
+  "isDistributed": false,
+  "localSpark": "false",
+  "intermediateSink": {},
+  "linkNodeOfNAIComponents": [
+    {
+      "currentId": "1",
+      "type": "DataSource",
+      "algoName": "fileTransfer",
+      "settings": "sourceSettings",
+      "prevNodeId": "",
+      "nextNodeId": "2"
+    },
+    {
+      "currentId": "2",
+      "type": "1DFOperartion",
+      "algoName": "dr",
+      "settings": "etlSettings",
+      "prevNodeId": "1",
+      "nextNodeId": "4"
+    },
+    {
+      "currentId": "4",
+      "type": "1DFOperartion",
+      "algoName": "etl-mv",
+      "settings": "etlSettings",
+      "prevNodeId": "2",
+      "nextNodeId": "5"
+    },
+    {
+      "currentId": "5",
+      "type": "1DFOperartion",
+      "algoName": "dr",
+      "settings": "etlSettings",
+      "prevNodeId": "4",
+      "nextNodeId": "6"
+    },
+    {
+      "currentId": "6",
+      "type": "1DFOperartion",
+      "algoName": "DE",
+      "settings": "etlSettings",
+      "prevNodeId": "5",
+      "nextNodeId": "7"
+    },
+    {
+      "currentId": "8",
+      "algoName": "b",
+      "settings": "dataProfilingSettings",
+      "prevNodeId": "10",
+      "nextNodeId": "9"
+    },
+    {
+      "currentId": "9",
+      "algoName": "xgb-c",
+      "settings": "modelAlgoSettings",
+      "prevNodeId": "8",
+      "nextNodeId": "3"
+    },
+    {
+      "currentId": "7",
+      "type": "1DFOperartion",
+      "algoName": "dr",
+      "settings": "etlSettings",
+      "prevNodeId": "6",
+      "nextNodeId": "10"
+    },
+    {
+      "currentId": "10",
+      "algoName": "si",
+      "settings": "dataProfilingSettings",
+      "prevNodeId": "7",
+      "nextNodeId": "8"
+    },
+    {
+      "currentId": "3",
+      "type": "DataSink",
+      "algoName": "fileTransferSink",
+      "settings": "sinkSettings",
+      "prevNodeId": "9",
+      "nextNodeId": ""
+    }
+  ],
+  "sparkConfig": {
+    "driver-memory": "1g",
+    "executor-memory": "1g",
+    "executor-cores": "2",
+    "num-executors": "1",
+    "queue": "default",
+    "sparkSql": "300"
+  },
+  "postgresSettings": {
+    "db": "test_db_result",
+    "host": "10.2.0.17",
+    "pass": "l1Mted+4uTTSeaYY0aYa0rL/IJ+R80uql9/lZLsFXCg0i3pWLkQ=",
+    "port": "5432",
+    "uName": "postgres"
+  },
+  "dataManagedIdentity": "false"
+}
+
