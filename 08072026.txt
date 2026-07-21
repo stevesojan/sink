@@ -1283,6 +1283,10 @@ Also output the pipeline_graph, list_of_nodes_executed, status_dict, response va
 
 All of these objects printed during traversal when each of the non sink nodes are executed.
 
+So while traversing for execution of each non sink node, as the intermediate data, all of these objects must be printed for traversal from each non sink node to the next.
+
+E.g if there's a dataframe, one of the nodes perform drop column operation, the top 10 rows of the output dataframe along with column names must be printed.
+
 7. Sink dispatch input
 Compare the sink-stage handoff:
 linked_list_json = sink_node.json
@@ -1316,3 +1320,8 @@ whether pipeline graph is the same after cleanup
 10. Final response object
 Compare:
 status_of_pipeline[RESPONSE_STATUS] returned from run_pipeline() and then from create().
+
+So when these objects are called/mutated in the pipeline execution their values are printed which we can then validate. The print logs for the fastapi object in  'main' are shown in the unicorn terminal itself since it executes the pipeline from there itself.
+
+For the fastapi object started up in 'api' the print logs are shown in the celery terminal.
+
