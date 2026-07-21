@@ -1198,3 +1198,121 @@ class GraphCompiler:
         json_dict: Dict[str, Dict[str, Any]],
     ) -> PipelineGraph:
         return self._builder.build(parsed_json, json_dict)
+
+
+
+prompt for validate refactor changes
+
+The changes are to be made to the contents of only 2 folders api and main. 
+
+I want to validate the execution of the pipeline from api and main folders, when their respective fastapi endpoints receive a Json.
+
+The idea is to include print statements for all these objects in their respective files, so we can compare and validate the values of these objects through terminal logs whenever they're called/mutated during pipeline execution and validate the execution from the refactored api folder versus the 'main' folder.
+
+These are the variables with
+
+1. Parsed request body
+This is the first checkpoint after the request body becomes a Python dict.
+Compare:
+data in create() after ast.literal_eval(...) and convert_boolean_nulls(...).
+What to verify:
+pipelineId
+timestamp
+version
+sourceSettings
+etlSettings
+modelAlgoSettings
+sinkSettings
+linkNodeOfNAIComponents
+This tells you whether the request was parsed identically.
+2. Log identity
+Compare:
+unique_key = data[PIPELINEID] + "_" + data[TIMESTAMP] + '_' + data[VERSION] in run_pipeline().
+This is a very good trace key because it should match exactly between old and refactored flow.
+Also compare:
+log_file path constructed in create().
+3. Parsed node map
+Compare:
+json_dict = json_parser_object.json_setting_to_map(data) in run_pipeline().
+This is one of the most important checkpoints.
+What to verify:
+number of keys in json_dict
+node IDs present
+node metadata attached to each node
+whether sink node is present
+whether special settings like sourceSettings, etlSettings, modelAlgoSettings, sinkSettings were mapped correctly
+4. Linked graph / linked list build result
+Compare:
+ll = LinkedList().linked_list_creation(data, pipeline_graph, json_dict) in run_pipeline().
+What to verify:
+returned head_node
+head_node.id
+structure/order of next_id and previous_id
+whether sink node is linked at the end
+whether pipeline_graph has the expected number of nodes and relationships
+This is where you verify that your refactored graph builder still produces the same pipeline shape.
+5. Traversal state at entry
+Compare the runtime variables created before traversal:
+head_node
+nodes_completed
+flag
+global_dataframe
+model_sequence
+serving_seqeunce
+sink_node
+These should have equivalent initial values in the refactor.
+Especially important:
+head_node
+sink_node
+pipeline_graph
+list_of_nodes_executed
+status_dict
+6. This is an important one.
+
+Traversal return value
+Compare:
+recursion_results = linkedlist_traverse.linked_list_traversal(...) and the unpacked values:
+flag
+global_dataframe
+model_sequence
+serving_seqeunce
+sink_node
+This is a strong checkpoint because it tells you whether the traversal produced the same intermediate execution state.
+
+Also output the pipeline_graph, list_of_nodes_executed, status_dict, response variable i.e response = setting_url.object_creator(dictionary_pass)
+
+All of these objects printed during traversal when each of the non sink nodes are executed.
+
+7. Sink dispatch input
+Compare the sink-stage handoff:
+linked_list_json = sink_node.json
+setting_url = upper_layer_object.executioner(linked_list_json, json_dict, global_dataframe)
+dictionary_pass = {...}
+You should compare:
+sink node JSON
+selected executor/class
+payload passed into sink executor
+This is crucial because sink execution is often where the pipeline ends and the final output is produced.
+8. Sink executor response
+Compare:
+response = setting_url.object_creator(dictionary_pass)
+This is the most important post-sink checkpoint.
+Compare:
+response[STATUS_DICT]
+response[LIST_OF_NODES_EXECUTED]
+response[PIPELINE_GRAPH]
+response[STATUS_CODE]
+These should match the original behaviour exactly.
+9. Final execution bookkeeping
+Compare after sink completion:
+status_dict.update(response[STATUS_DICT])
+list_of_nodes_executed.extend(response[LIST_OF_NODES_EXECUTED])
+pipeline_graph = response[PIPELINE_GRAPH]
+This is useful because it tells you whether the final execution accounting matches.
+What to check:
+total executed nodes count
+whether unvisited nodes are removed
+whether pipeline graph is the same after cleanup
+10. Final response object
+Compare:
+status_of_pipeline[RESPONSE_STATUS] returned from run_pipeline() and then from create().
