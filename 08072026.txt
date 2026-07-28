@@ -1325,3 +1325,55 @@ So when these objects are called/mutated in the pipeline execution their values 
 
 For the fastapi object started up in 'api' the print logs are shown in the celery terminal.
 
+
+
+pr for refactor
+
+
+Title
+Refactor API Execution into Distributed Pipeline Architecture with Celery Integration
+Description
+Summary
+This PR refactors the API execution flow from a monolithic endpoint into a modular, distributed pipeline architecture. Pipeline execution responsibilities have been separated into dedicated services under the new pipeline_execution module, with Celery and Redis enabling asynchronous task execution. The PR also introduces request validation, automated tests, and configuration updates to support the new architecture.
+Changes
+API Refactoring
+Refactored the API from a monolithic endpoint into a distributed service-based execution flow.
+Introduced the pipeline_execution module following the proposed folder structure.
+Separated pipeline execution logic into dedicated components to improve modularity and maintainability.
+Request Processing
+Added Pydantic validation for incoming JSON requests.
+Converted validated request payloads into Python dictionaries for downstream processing.
+Asynchronous Execution
+Integrated Celery for task orchestration.
+Added Redis as the Celery broker and result backend.
+Configured environment-specific broker/backend URLs through config.json.
+Testing
+Added a dedicated test suite under:
+tests/test_pipeline_execution/
+Introduced unit tests for the refactored pipeline execution components.
+Configuration
+Added four new configuration variables in config.json:
+Production Celery Broker URL
+Production Celery Backend URL
+Test Celery Broker URL
+Test Celery Backend URL
+Directory Structure
+pipeline_execution/
+├── ...
+├── ...
+├── ...
+
+tests/
+└── test_pipeline_execution/
+    ├── ...
+    ├── ...
+    └── ...
+(Replace the placeholders with your actual directory tree.)
+Benefits
+Modular pipeline execution architecture.
+Asynchronous execution using Celery and Redis.
+Improved separation of concerns.
+Stronger request validation through Pydantic.
+Better testability with dedicated unit tests.
+Environment-specific configuration for production and testing.
+One additional change you may want to mention (if it exists in your implementation) is that the API endpoint is now primarily responsible for request validation and dispatch, while the execution logic resides in the pipeline_execution package. This is an important architectural improvement because it clearly separates the API layer from the execution layer.
