@@ -1377,3 +1377,11 @@ Stronger request validation through Pydantic.
 Better testability with dedicated unit tests.
 Environment-specific configuration for production and testing.
 One additional change you may want to mention (if it exists in your implementation) is that the API endpoint is now primarily responsible for request validation and dispatch, while the execution logic resides in the pipeline_execution package. This is an important architectural improvement because it clearly separates the API layer from the execution layer.
+
+
+questions in PMML pipeline.fit
+
+How is the PMML pipeline fit on the data? For example pipeline.fit with the models inside before the last model must automatically apply .fit and .transform, yet in a file label_cols.py or named something like that I see .fit and .transform manually invoked?
+
+1. How is the PMML pipeline fit on the data?
+2. Why does labels_cols.py separately invoke .fit and .transform?
