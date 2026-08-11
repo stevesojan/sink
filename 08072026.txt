@@ -1385,3 +1385,14 @@ How is the PMML pipeline fit on the data? For example pipeline.fit with the mode
 
 1. How is the PMML pipeline fit on the data?
 2. Why does labels_cols.py separately invoke .fit and .transform?
+
+
+questions for graph exec:
+
+3 Questions:
+
+If we're implementing Kahn's topological sort, do we have a ready queue that tracks the   nodes with an indegree of 0, ready for execution? If so, where and which file?
+
+The in_edges and out_edges used to compute indegrees and outdegrees of the nodes? Which file? Where?
+
+So currently it still uses the linkedlist execution structure just that the linkedlist execution structure executes per node instead of a path?
