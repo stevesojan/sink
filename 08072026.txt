@@ -1396,3 +1396,23 @@ If we're implementing Kahn's topological sort, do we have a ready queue that tra
 The in_edges and out_edges used to compute indegrees and outdegrees of the nodes? Which file? Where?
 
 So currently it still uses the linkedlist execution structure just that the linkedlist execution structure executes per node instead of a path?
+
+
+
+persistence flow:
+
+clustering individual execution currently it maintains the variables when clustering and modelling are together, to automatically form the splits which are used by modelling downstream. This happens because the variables are passed to ctx? How does modelling know?
+
+
+
+Also report the persistence flow and deletion logic to and from DuckDB, for the nodes in this workflow.
+
+
+Source -> ETL -> Segmentation -> DP -> Cluster -> ML -> Sink.
+
+So for each of the nodes in this workflow, just start from when MainController creates their object and so on, show how their data is persisted to DuckDB, what is persisted , the logic behind how transaction is verified and previous node output dataframe is deleted.
+
+
+Full data flow:
+
+It must show the execution lifecycle of each node, say starting from graph_traversal_service is it? Source node, creates Source object via MainController, further downstream to how it processes. Generate a highly detailed workflow diagram which shows how the data moves from which component/function/object of which file to which file, starting from receiving the json body at the endpoint.
